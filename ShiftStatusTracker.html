@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Amazon CS Shift Status Tracker - Emergency Response</title>
+  <style>
+    :root{--bg:#f3f4f6;--card:#ffffff;--muted:#6b7280;--accent:#0ea5a4}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:var(--bg); margin:0; padding:20px}
+    .container{max-width:1100px;margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0;color:#0b5394}
+    .summary{display:grid;grid-template-columns:160px repeat(5,1fr);gap:8px;padding:12px;background:var(--card);border-radius:10px;box-shadow:0 1px 4px rgba(2,6,23,.06);align-items:center}
+    .summary .total{font-weight:700}
+    .badge{padding:8px;border-radius:8px;color:#fff;text-align:center;font-weight:600}
+    .bg-onsite{background:#16a34a}
+    .bg-remote{background:#f59e0b}
+    .bg-evacuated{background:#0284c7}
+    .bg-missing{background:#dc2626}
+    .bg-injured{background:#f97316}
+    .card{background:var(--card);padding:14px;border-radius:10px;box-shadow:0 1px 4px rgba(2,6,23,.06);margin-bottom:14px}
+    .grid{display:grid;grid-template-columns:1fr 120px 160px 120px;gap:8px}
+    input,select,button{font-size:14px}
+    input,select{padding:8px;border:1px solid #e5e7eb;border-radius:8px}
+    button{padding:8px 12px;border-radius:8px;border:none;cursor:pointer}
+    .btn-primary{background:#0ea5a4;color:#fff}
+    .btn-save{background:#0369a1;color:#fff}
+    .btn-danger{background:#dc2626;color:#fff}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #e6e9ef;text-align:left}
+    th{background:#f8fafc;color:var(--muted);font-weight:600}
+    .actions button{margin-right:6px}
+    .toast{position:fixed;right:18px;top:18px;background:#111827;color:white;padding:10px 14px;border-radius:10px;box-shadow:0 6px 18px rgba(2,6,23,.2)}
+    .muted{color:var(--muted);font-size:13px}
+    @media (max-width:800px){.grid{grid-template-columns:1fr 100px 120px 100px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Amazon CS Shift Status Tracker - Emergency Response</h1>
+      <div class="muted">Local-only (browser) version • Upload to SharePoint as a single HTML file by Mary Marco</div>
+    </header>
+
+    <!-- Summary -->
+    <div id="summary" class="summary card" aria-live="polite">
+      <div class="total">Total HC: <span id="totalHC">0</span></div>
+      <div class="badge bg-onsite">On-site: <span id="onsiteCount">0</span></div>
+      <div class="badge bg-remote">Remote: <span id="remoteCount">0</span></div>
+      <div class="badge bg-evacuated">Evacuated: <span id="evacuatedCount">0</span></div>
+      <div class="badge bg-missing">Missing: <span id="missingCount">0</span></div>
+      <div class="badge bg-injured">Injured: <span id="injuredCount">0</span></div>
+    </div>
+
+    <!-- Input form -->
+    <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="teamName" placeholder="Team Name (required)" style="flex:2;min-width:160px">
+        <input id="hc" type="number" placeholder="Headcount (required)" style="width:110px">
+        <select id="status" style="width:180px">
+          <option>On-site</option>
+          <option>Remote</option>
+          <option>Evacuated</option>
+          <option>Missing</option>
+          <option>Injured</option>
+        </select>
+        <button id="addBtn" class="btn-primary">Add / Update</button>
+        <button id="saveBtn" class="btn-save">Save (Download JSON)</button>
+        <button id="clearBtn" class="btn-danger">Clear All Data</button>
+      </div>
+      <div class="muted" style="margin-top:8px">To edit an existing team, click <strong>Edit</strong> in the Team list. Each submission is timestamped and preserved in history.</div>
+    </div>
+
+    <!-- Team list -->
+    <div class="card">
+      <h3 style="margin-top:0">Current Team Status</h3>
+      <div style="overflow:auto">
+        <table id="teamsTable">
+          <thead>
+            <tr><th>Team</th><th>Headcount</th><th>Status</th><th>Last Updated</th><th style="width:160px">Action</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="card">
+      <h3 style="margin-top:0">Update History (most recent last)</h3>
+      <div style="overflow:auto;max-height:320px">
+        <table id="historyTable">
+          <thead>
+            <tr><th>Team</th><th>Headcount</th><th>Status</th><th>Timestamp</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script>
+    // Keys
+    const KEY_TEAMS = 'shift_teams';
+    const KEY_HISTORY = 'shift_history';
+
+    // Elements
+    const teamNameEl = document.getElementById('teamName');
+    const hcEl = document.getElementById('hc');
+    const statusEl = document.getElementById('status');
+    const addBtn = document.getElementById('addBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const teamsTable = document.getElementById('teamsTable');
+    const teamsTableBody = teamsTable.querySelector('tbody');
+    const historyTableBody = document.querySelector('#historyTable tbody');
+    const toastEl = document.getElementById('toast');
+
+    // Summary nodes
+    const totalHCEl = document.getElementById('totalHC');
+    const onsiteCountEl = document.getElementById('onsiteCount');
+    const remoteCountEl = document.getElementById('remoteCount');
+    const evacuatedCountEl = document.getElementById('evacuatedCount');
+    const missingCountEl = document.getElementById('missingCount');
+    const injuredCountEl = document.getElementById('injuredCount');
+
+    // State
+    let teams = load(KEY_TEAMS) || []; // array of {name,hc,status,timestamp}
+    let history = load(KEY_HISTORY) || []; // array of {name,hc,status,timestamp}
+
+    let editingTeamName = null; // when editing, holds the original team name
+
+    // --- helpers ---
+    function load(key){
+      try{ const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null } catch(e){console.error(e); return null}
+    }
+    function save(key,obj){ localStorage.setItem(key, JSON.stringify(obj)); }
+    function showToast(msg){ toastEl.textContent = msg; toastEl.style.display='block'; clearTimeout(toastEl._t); toastEl._t = setTimeout(()=>{ toastEl.style.display='none' }, 3000);} 
+    function now(){ return new Date().toLocaleString(); }
+
+    // calculate totals and render summary
+    function renderSummary(){
+      const totals = { 'On-site':0,'Remote':0,'Evacuated':0,'Missing':0,'Injured':0 };
+      let totalHC = 0;
+      teams.forEach(t => { totals[t.status] = (totals[t.status]||0) + (Number(t.hc)||0); totalHC += Number(t.hc)||0 });
+      totalHCEl.textContent = totalHC;
+      onsiteCountEl.textContent = totals['On-site'] || 0;
+      remoteCountEl.textContent = totals['Remote'] || 0;
+      evacuatedCountEl.textContent = totals['Evacuated'] || 0;
+      missingCountEl.textContent = totals['Missing'] || 0;
+      injuredCountEl.textContent = totals['Injured'] || 0;
+    }
+
+    // render teams table
+    function renderTeams(){
+      teamsTableBody.innerHTML = '';
+      if(!teams.length){
+        const r = document.createElement('tr'); r.innerHTML = '<td colspan="5" class="muted" style="text-align:center;padding:16px">No data yet.</td>';
+        teamsTableBody.appendChild(r); return;
+      }
+      teams.forEach(t => {
+        const tr = document.createElement('tr');
+        tr.dataset.teamName = t.name;
+        tr.innerHTML = `<td>${escapeHtml(t.name)}</td>
+                        <td>${t.hc}</td>
+                        <td><span class="badge ${classForStatus(t.status)}">${t.status}</span></td>
+                        <td class="muted" style="min-width:150px">${t.timestamp}</td>
+                        <td class="actions" style="text-align:right">
+                          <button class="editBtn">Edit</button>
+                          <button class="deleteBtn">Delete</button>
+                        </td>`;
+        teamsTableBody.appendChild(tr);
+      });
+    }
+
+    // render history table (most recent last)
+    function renderHistory(){
+      historyTableBody.innerHTML = '';
+      if(!history.length){ const r = document.createElement('tr'); r.innerHTML = '<td colspan="4" class="muted" style="text-align:center;padding:14px">No history yet.</td>'; historyTableBody.appendChild(r); return }
+      history.forEach(h => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${escapeHtml(h.name)}</td><td>${h.hc}</td><td><span class="badge ${classForStatus(h.status)}">${h.status}</span></td><td class="muted">${h.timestamp}</td>`;
+        historyTableBody.appendChild(tr);
+      })
+    }
+
+    function classForStatus(s){ switch(s){ case 'On-site': return 'bg-onsite'; case 'Remote': return 'bg-remote'; case 'Evacuated': return 'bg-evacuated'; case 'Missing': return 'bg-missing'; case 'Injured': return 'bg-injured'; default: return 'bg-onsite' } }
+
+    function escapeHtml(str){ if(!str && str!==0) return ''; return String(str).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+
+    // Add or update team
+    function addOrUpdate(){
+      const name = (teamNameEl.value || '').trim();
+      const hcVal = hcEl.value === '' ? '' : Number(hcEl.value);
+      const statusVal = statusEl.value;
+      if(!name){ showToast('Please enter Team Name'); teamNameEl.focus(); return }
+      if(hcVal === '' || isNaN(hcVal) || hcVal < 0){ showToast('Please enter a valid Headcount (0 or more)'); hcEl.focus(); return }
+
+      const timestamp = now();
+      const entry = { name, hc: Number(hcVal), status: statusVal, timestamp };
+
+      // Update teams: replace if exists (keeping latest only in the teams list)
+      const idx = teams.findIndex(t => t.name.toLowerCase() === name.toLowerCase());
+      if(idx >= 0){ teams[idx] = entry } else { teams.push(entry) }
+
+      // push to history
+      history.push(entry);
+
+      persistAndRender();
+      showToast('✅ Data updated');
+
+      // clear form
+      teamNameEl.value = '';
+      hcEl.value = '';
+      statusEl.value = 'On-site';
+      editingTeamName = null;
+      addBtn.textContent = 'Add / Update';
+    }
+
+    function startEdit(teamName){
+      // find team by name (case-insensitive)
+      const t = teams.find(x => x.name.toLowerCase() === String(teamName).toLowerCase());
+      if(!t) return showToast('Team not found');
+      editingTeamName = t.name;
+      teamNameEl.value = t.name;
+      hcEl.value = t.hc;
+      statusEl.value = t.status;
+      addBtn.textContent = 'Save Changes';
+      teamNameEl.focus();
+    }
+
+    function deleteTeam(name){
+      const normalized = String(name).toLowerCase();
+      if(!confirm('Delete this team entry? This removes the team from the current table but preserves history.')) return;
+      const before = teams.length;
+      teams = teams.filter(t => t.name.toLowerCase() !== normalized);
+      if(teams.length === before){ showToast('Entry not found'); return }
+      persistAndRender();
+      showToast('Entry deleted');
+    }
+
+    function clearAll(){
+      if(!confirm('Clear all tracker data (this will remove current teams and history)?')) return;
+      teams = [];
+      history = [];
+      try{ localStorage.removeItem(KEY_TEAMS); localStorage.removeItem(KEY_HISTORY); } catch(e){ console.error(e) }
+      // ensure UI reflects cleared data immediately
+      persistAndRender();
+      // Some SharePoint iframe environments may cache; force a reload to be certain
+      try{ setTimeout(()=>{ location.reload(); }, 300); } catch(e){}
+      showToast('🗑️ All data cleared');
+    }
+
+    function persistAndRender(){ save(KEY_TEAMS, teams); save(KEY_HISTORY, history); renderTeams(); renderHistory(); renderSummary(); }
+
+    function saveData(){
+      const payload = { teams, history };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `ShiftStatus_${new Date().toISOString().slice(0,19)}.json`; a.click(); URL.revokeObjectURL(url);
+      showToast('💾 Data downloaded');
+    }
+
+    // initial render
+    persistAndRender();
+
+    // hooks
+    addBtn.addEventListener('click', addOrUpdate);
+    saveBtn.addEventListener('click', saveData);
+    clearBtn.addEventListener('click', clearAll);
+
+    // delegated click handler for edit/delete buttons (works reliably in iframe environments)
+    teamsTableBody.addEventListener('click', function(e){
+      const target = e.target;
+      if(target.classList.contains('editBtn')){
+        const tr = target.closest('tr');
+        const teamName = tr && tr.dataset && tr.dataset.teamName ? tr.dataset.teamName : tr.cells[0].textContent;
+        startEdit(teamName);
+      } else if(target.classList.contains('deleteBtn')){
+        const tr = target.closest('tr');
+        const teamName = tr && tr.dataset && tr.dataset.teamName ? tr.dataset.teamName : tr.cells[0].textContent;
+        deleteTeam(teamName);
+      }
+    });
+
+    // allow Enter to submit on inputs
+    [teamNameEl, hcEl].forEach(el => el.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') addOrUpdate() }))
+
+  </script>
+</body>
+</html>
